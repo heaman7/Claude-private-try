@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>廿一點 Blackjack</title>
+<style>
+  :root { --felt:#0b6b3a; --felt-dark:#084d2a; --gold:#f5c542; --card:#fff; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin:0; min-height:100vh; font-family:-apple-system,"PingFang HK","Noto Sans TC",sans-serif;
+         background:radial-gradient(circle at 50% 30%, var(--felt), var(--felt-dark)); color:#fff;
+         display:flex; flex-direction:column; align-items:center; padding:16px; }
+  h1 { margin:8px 0 4px; letter-spacing:2px; }
+  .bank { display:flex; gap:24px; font-size:18px; margin-bottom:8px; }
+  .bank b { color:var(--gold); }
+  .area { width:100%; max-width:640px; text-align:center; margin:10px 0; }
+  .area h2 { font-size:15px; font-weight:500; opacity:.85; margin:0 0 6px; }
+  .hand { display:flex; justify-content:center; gap:8px; min-height:112px; flex-wrap:wrap; }
+  .card { width:70px; height:104px; background:var(--card); color:#111; border-radius:8px;
+          display:flex; flex-direction:column; justify-content:space-between; padding:6px 7px;
+          font-weight:700; font-size:20px; box-shadow:0 3px 8px rgba(0,0,0,.4); animation:deal .25s ease-out; }
+  .card.red { color:#c0152a; }
+  .card .c { align-self:center; font-size:32px; }
+  .card .b { align-self:flex-end; transform:rotate(180deg); }
+  .card.back { background:repeating-linear-gradient(45deg,#1b3a8a,#1b3a8a 6px,#2a52c4 6px,#2a52c4 12px); color:transparent; }
+  @keyframes deal { from { transform:translateY(-20px) scale(.9); opacity:0; } }
+  .score { margin-top:4px; font-size:16px; min-height:22px; }
+  #msg { min-height:34px; font-size:22px; font-weight:700; color:var(--gold); text-align:center; margin:8px 0; }
+  .controls { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:6px 0; }
+  button { font-size:16px; padding:10px 20px; border:0; border-radius:999px; cursor:pointer; font-weight:700;
+           background:var(--gold); color:#222; }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  button.alt { background:#fff; }
+  .chips { display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; }
+  .chip { width:56px; height:56px; border-radius:50%; border:4px dashed rgba(255,255,255,.85); color:#fff; padding:0; font-size:15px; }
+  .chip[data-v="10"]{background:#2a62d6}.chip[data-v="25"]{background:#1e8a3c}
+  .chip[data-v="50"]{background:#c0392b}.chip[data-v="100"]{background:#222}
+  .bet { font-size:18px; margin:6px 0; }
+  .rules { font-size:12px; opacity:.7; max-width:520px; text-align:center; margin-top:14px; }
+</style>
+</head>
+<body>
+  <h1>♠ 廿一點 ♥</h1>
+  <div class="bank">
+    <div>籌碼：<b id="bank">1000</b></div>
+    <div>下注：<b id="bet">0</b></div>
+  </div>
+
+  <div class="area"><h2>莊家</h2><div class="hand" id="dealer"></div><div class="score" id="dscore"></div></div>
+  <div id="msg"></div>
+  <div class="area"><h2>你</h2><div class="hand" id="player"></div><div class="score" id="pscore"></div></div>
+
+  <div class="area" id="betting">
+    <div class="chips">
+      <button class="chip" data-v="10">10</button>
+      <button class="chip" data-v="25">25</button>
+      <button class="chip" data-v="50">50</button>
+      <button class="chip" data-v="100">100</button>
+    </div>
+    <div class="controls">
+      <button class="alt" id="clear">清除下注</button>
+      <button id="deal">發牌</button>
+    </div>
+  </div>
+
+  <div class="area controls" id="actions" hidden>
+    <button id="hit">要牌 Hit</button>
+    <button id="stand">停牌 Stand</button>
+    <button class="alt" id="double">加倍 Double</button>
+  </div>
+
+  <div class="rules">規則：莊家 17 點或以上停牌；Blackjack 賠 3:2；爆牌即輸；可於首兩張牌加倍。籌碼用完可重新開始。</div>
+  <button class="alt" id="reset" style="margin-top:10px;font-size:13px;padding:6px 14px">重設籌碼</button>
+
+<script>
+const SUITS = ["♠","♥","♦","♣"], RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+const $ = id => document.getElementById(id);
+let deck = [], player = [], dealer = [], bank = 1000, bet = 0, phase = "bet", hideDealer = true;
+
+try { const s = localStorage.getItem("bj-bank"); if (s && +s > 0) bank = +s; } catch (e) {}
+
+function newDeck() {
+  deck = [];
+  for (let d = 0; d < 4; d++) for (const s of SUITS) for (const r of RANKS) deck.push({ s, r });
+  for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+}
+function draw() { if (deck.length < 52) newDeck(); return deck.pop(); }
+
+function value(hand) {
+  let total = 0, aces = 0;
+  for (const c of hand) {
+    if (c.r === "A") { aces++; total += 11; }
+    else if ("JQK".includes(c.r)) total += 10;
+    else total += +c.r;
+  }
+  while (total > 21 && aces) { total -= 10; aces--; }
+  return total;
+}
+const isBJ = h => h.length === 2 && value(h) === 21;
+
+function cardEl(c, hidden) {
+  const el = document.createElement("div");
+  if (hidden) { el.className = "card back"; el.textContent = "?"; return el; }
+  el.className = "card" + (c.s === "♥" || c.s === "♦" ? " red" : "");
+  el.innerHTML = `<span>${c.r}${c.s}</span><span class="c">${c.s}</span><span class="b">${c.r}${c.s}</span>`;
+  return el;
+}
+
+function render() {
+  $("bank").textContent = bank;
+  $("bet").textContent = bet;
+  const dh = $("dealer"), ph = $("player");
+  dh.innerHTML = ""; ph.innerHTML = "";
+  dealer.forEach((c, i) => dh.appendChild(cardEl(c, hideDealer && i === 1)));
+  player.forEach(c => ph.appendChild(cardEl(c)));
+  $("dscore").textContent = dealer.length ? (hideDealer ? `${value([dealer[0]])} + ?` : value(dealer)) : "";
+  $("pscore").textContent = player.length ? value(player) : "";
+  $("betting").hidden = phase !== "bet";
+  $("actions").hidden = phase !== "play";
+  $("deal").disabled = bet === 0;
+  $("clear").disabled = bet === 0;
+  document.querySelectorAll(".chip").forEach(b => b.disabled = +b.dataset.v > bank - bet);
+  $("double").disabled = !(phase === "play" && player.length === 2 && bank - bet >= bet);
+  try { localStorage.setItem("bj-bank", bank); } catch (e) {}
+}
+
+function setMsg(t) { $("msg").textContent = t; }
+
+document.querySelectorAll(".chip").forEach(b => b.onclick = () => { bet += +b.dataset.v; render(); });
+$("clear").onclick = () => { bet = 0; render(); };
+
+$("deal").onclick = () => {
+  if (!bet) return;
+  setMsg("");
+  player = [draw(), draw()]; dealer = [draw(), draw()];
+  hideDealer = true; phase = "play"; render();
+  if (isBJ(player) || isBJ(dealer)) finish();
+};
+$("hit").onclick = () => {
+  player.push(draw()); render();
+  if (value(player) > 21) finish(); else if (value(player) === 21) dealerTurn();
+};
+$("stand").onclick = dealerTurn;
+$("double").onclick = () => {
+  bet *= 2; player.push(draw()); render();
+  if (value(player) > 21) finish(); else dealerTurn();
+};
+
+function dealerTurn() {
+  hideDealer = false;
+  while (value(dealer) < 17) dealer.push(draw());
+  finish();
+}
+
+function finish() {
+  hideDealer = false; phase = "over";
+  const p = value(player), d = value(dealer);
+  let msg, delta;
+  if (isBJ(player) && !isBJ(dealer)) { msg = "Blackjack！贏 3:2 🎉"; delta = Math.floor(bet * 1.5); }
+  else if (isBJ(dealer) && !isBJ(player)) { msg = "莊家 Blackjack，你輸了"; delta = -bet; }
+  else if (p > 21) { msg = "爆牌！你輸了"; delta = -bet; }
+  else if (d > 21) { msg = "莊家爆牌，你贏了！🎉"; delta = bet; }
+  else if (p > d) { msg = "你贏了！🎉"; delta = bet; }
+  else if (p < d) { msg = "你輸了"; delta = -bet; }
+  else { msg = "和局"; delta = 0; }
+  bank += delta;
+  if (bank <= 0) { msg += "　籌碼用完，已重設為 1000"; bank = 1000; }
+  setMsg(msg);
+  bet = 0; phase = "bet"; render();
+}
+
+$("reset").onclick = () => { bank = 1000; bet = 0; player = []; dealer = []; phase = "bet"; setMsg(""); render(); };
+
+newDeck(); render();
+</script>
+</body>
+</html>
